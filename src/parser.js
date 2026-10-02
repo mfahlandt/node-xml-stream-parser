@@ -108,6 +108,8 @@ const Parser = (function(_Writable) {
     _this.state = STATE.TEXT;
     _this.buffer = "";
     _this.pos = 0;
+    _this.prev = ""; // last character written
+    _this.prev2 = ""; // second to last character written
     _this.tagType = TAG_TYPE.NONE;
     return _this;
   }
@@ -118,10 +120,30 @@ const Parser = (function(_Writable) {
       value: function _write(chunk, encoding, done) {
         chunk = typeof chunk !== "string" ? chunk.toString() : chunk;
         for (let i = 0; i < chunk.length; i++) {
-          let c = chunk[i];
-          let prev = this.buffer[this.pos - 1];
+          const c = chunk[i];
+          // Track previous characters separately instead of indexing into
+          // this.buffer: indexing a string built by `+=` forces V8 to flatten
+          // it on every iteration, which results in quadratic runtime.
+          const prev = this.prev;
+          const prev2 = this.prev2;
           this.buffer += c;
           this.pos++;
+          this.prev2 = prev;
+          this.prev = c;
+
+          if (this.pos > MAX_BUFFER_LENGTH) {
+            this.buffer = "";
+            this.pos = 0;
+            this.prev = "";
+            this.prev2 = "";
+            this.state = STATE.TEXT;
+            this.tagType = TAG_TYPE.NONE;
+            return done(
+              new Error(
+                "Max buffer length of " + MAX_BUFFER_LENGTH + " exceeded"
+              )
+            );
+          }
 
           switch (this.state) {
             case STATE.TEXT:
@@ -135,18 +157,10 @@ const Parser = (function(_Writable) {
               if (prev === "<" && c === "/") {
                 this._onCloseTagStart();
               }
-              if (
-                this.buffer[this.pos - 3] === "<" &&
-                prev === "!" &&
-                c === "["
-              ) {
+              if (prev2 === "<" && prev === "!" && c === "[") {
                 this._onCDATAStart();
               }
-              if (
-                this.buffer[this.pos - 3] === "<" &&
-                prev === "!" &&
-                c === "-"
-              ) {
+              if (prev2 === "<" && prev === "!" && c === "-") {
                 this._onCommentStart();
               }
               if (c === ">") {
@@ -162,15 +176,11 @@ const Parser = (function(_Writable) {
               break;
 
             case STATE.CDATA:
-              if (this.buffer[this.pos - 3] === "]" && prev === "]" && c === ">") this._onCDATAEnd();
+              if (prev2 === "]" && prev === "]" && c === ">") this._onCDATAEnd();
               break;
 
             case STATE.IGNORE_COMMENT:
-              if (
-                this.buffer[this.pos - 3] === "-" &&
-                prev === "-" &&
-                c === ">"
-              )
+              if (prev2 === "-" && prev === "-" && c === ">")
                 this._onCommentEnd();
               break;
           }
@@ -316,7 +326,10 @@ const Parser = (function(_Writable) {
         if (parsedString && parsedString.length > 0) {
           name = parsedString[1];
           const attributesString = str.substr(name.length);
-          const attributeRegexp = /([a-zäöüßÄÖÜA-Z0-9:_\-.]+?)="([^"]+?)"/g;
+          // Attributes must be preceded by whitespace and are matched greedily.
+          // This prevents super-linear backtracking (ReDoS) on unterminated
+          // attribute values, see GHSA-5j83-mpvp-f3gm.
+          const attributeRegexp = /\s([a-zäöüßÄÖÜA-Z0-9:_\-.]+)="([^"]*)"/g;
           let match = attributeRegexp.exec(attributesString);
           let attributes = {};
           while (match != null) {
@@ -337,6 +350,10 @@ const Parser = (function(_Writable) {
 })(_stream.Writable);
 
 exports.default = Parser;
+
+// Maximum number of characters buffered for a single text node, tag,
+// instruction, CDATA section or comment.
+const MAX_BUFFER_LENGTH = 1024 * 1024;
 
 const STATE = {
   TEXT: 0,
