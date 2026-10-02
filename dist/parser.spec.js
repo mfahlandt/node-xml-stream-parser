@@ -171,4 +171,63 @@ describe("node-xml-stream", function () {
       });
     });
   });
+
+  describe("Attributes", function () {
+    it("parses empty, namespaced and multiline attributes", function (done) {
+      var p = new _index2.default();
+      p.on("opentag", function (name, attrs) {
+        (0, _chai.expect)(name).to.eql("root");
+        (0, _chai.expect)(attrs).to.eql({ a: "1", b: "", "c:d": "e f" });
+        done();
+      });
+      p.write('<root a="1" b=""\n c:d="e f">');
+    });
+  });
+
+  describe("Denial of Service (GHSA-5j83-mpvp-f3gm)", function () {
+    this.timeout(5000);
+
+    it("does not backtrack on unterminated attribute values (ReDoS)", function (done) {
+      var p = new _index2.default();
+      var start = Date.now();
+      p.on("finish", function () {
+        (0, _chai.expect)(Date.now() - start).to.be.below(1000);
+        done();
+      });
+      p.write('<a b="' + "C".repeat(200000) + ">");
+      p.end();
+    });
+
+    it("handles long text without markup in linear time", function (done) {
+      var p = new _index2.default();
+      var start = Date.now();
+      p.on("finish", function () {
+        (0, _chai.expect)(Date.now() - start).to.be.below(1000);
+        done();
+      });
+      p.write("A".repeat(500000));
+      p.end();
+    });
+
+    it("handles long text split into many chunks in linear time", function (done) {
+      var p = new _index2.default();
+      var start = Date.now();
+      p.on("finish", function () {
+        (0, _chai.expect)(Date.now() - start).to.be.below(1000);
+        done();
+      });
+      for (var i = 0; i < 500; i++) {
+        p.write("A".repeat(1000));
+      }p.end();
+    });
+
+    it("emits an error when the buffer limit is exceeded", function (done) {
+      var p = new _index2.default();
+      p.on("error", function (err) {
+        (0, _chai.expect)(err.message).to.match(/Max buffer length/);
+        done();
+      });
+      p.write("A".repeat(1024 * 1024 + 1));
+    });
+  });
 });

@@ -180,4 +180,62 @@ describe("node-xml-stream", function() {
       });
     });
   });
+
+  describe("Attributes", function() {
+    it("parses empty, namespaced and multiline attributes", function(done) {
+      let p = new Parser();
+      p.on("opentag", function(name, attrs) {
+        expect(name).to.eql("root");
+        expect(attrs).to.eql({ a: "1", b: "", "c:d": "e f" });
+        done();
+      });
+      p.write('<root a="1" b=""\n c:d="e f">');
+    });
+  });
+
+  describe("Denial of Service (GHSA-5j83-mpvp-f3gm)", function() {
+    this.timeout(5000);
+
+    it("does not backtrack on unterminated attribute values (ReDoS)", function(done) {
+      let p = new Parser();
+      const start = Date.now();
+      p.on("finish", () => {
+        expect(Date.now() - start).to.be.below(1000);
+        done();
+      });
+      p.write('<a b="' + "C".repeat(200000) + ">");
+      p.end();
+    });
+
+    it("handles long text without markup in linear time", function(done) {
+      let p = new Parser();
+      const start = Date.now();
+      p.on("finish", () => {
+        expect(Date.now() - start).to.be.below(1000);
+        done();
+      });
+      p.write("A".repeat(500000));
+      p.end();
+    });
+
+    it("handles long text split into many chunks in linear time", function(done) {
+      let p = new Parser();
+      const start = Date.now();
+      p.on("finish", () => {
+        expect(Date.now() - start).to.be.below(1000);
+        done();
+      });
+      for (let i = 0; i < 500; i++) p.write("A".repeat(1000));
+      p.end();
+    });
+
+    it("emits an error when the buffer limit is exceeded", function(done) {
+      let p = new Parser();
+      p.on("error", err => {
+        expect(err.message).to.match(/Max buffer length/);
+        done();
+      });
+      p.write("A".repeat(1024 * 1024 + 1));
+    });
+  });
 });
